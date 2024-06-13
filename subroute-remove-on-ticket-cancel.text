@@ -1,0 +1,83 @@
+exports = async function(changeEvent) {
+  
+  
+  const docId = changeEvent.documentKey._id;
+
+  const serviceName = "AtlasCluster";
+  const database = "intercity-web-db";
+  const db = context.services.get(serviceName).db(database);
+  
+  const countermanTrips = db.collection('countermantrips')
+  const subRouteTrips = db.collection('subroutetrips')
+  const tickets = db.collection('tickets')
+  
+  try {
+    const ticket = await tickets.findOne({_id: docId});
+    
+    if(ticket.ticketStatus === "CANCELLED" && !ticket.status){
+      console.log('............Start Deleting .............')
+    
+      const trip = await countermanTrips.findOne({_id: ticket.trip});
+      const mainSubRouteTrip = await subRouteTrips.findOne({
+        _id: ticket.subRouteTrip
+      })
+      
+      //getSubRoutesForUpdateService
+      let getSubRoutes = await subRouteTrips.find({
+        countermanTrip: ticket.trip,
+        $or:[
+            {
+              from: ticket.originCity
+            },
+            {
+              to: ticket.destinationCity
+            },
+            {
+              from: { $in: mainSubRouteTrip.subRouteViaCities }
+            },
+            {
+              to: { $in: mainSubRouteTrip.subRouteViaCities }
+            },
+            {
+              subRouteViaCities: ticket.originCity
+            },
+            {
+              subRouteViaCities: ticket.destinationCity
+            }
+          ]
+      },{
+        selector: '_id'
+      }).toArray();
+      getSubRoutes = getSubRoutes.map((trip) => trip._id.toString())
+      
+      // remove ticket form subRoute 
+      getSubRoutes.forEach(async (item) => {
+        const subroute = await subRouteTrips.findOne({_id: new BSON.ObjectId(item)});
+        
+        const newSeatPlan = subroute.seatPlan.map((seat) => {
+          let allSoldTickets = [];
+          
+          if(ticket.seats.includes(seat.label)){
+            allSoldTickets = seat.tickets.filter((soldTicket) => soldTicket.ticketId.toString() !== ticket._id.toString())
+            console.log("allSoldTickets", JSON.stringify(allSoldTickets) )
+          }else{
+            allSoldTickets = seat.tickets;
+          }
+          
+          return {...seat, tickets: allSoldTickets }
+        });
+        
+        await subRouteTrips.updateOne({
+          _id: new BSON.ObjectId(item)
+        }, {
+          ...subroute,
+          seatPlan: newSeatPlan
+        });
+        console.log('successfully update subroute.', item)
+      });
+    
+    }
+  } catch(err) {
+    console.log("error performing mongodb write: ", err.message);
+  }
+};

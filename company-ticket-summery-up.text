@@ -1,0 +1,185 @@
+
+exports = async function(changeEvent) {
+  
+  const docId = changeEvent.documentKey._id;
+
+  const serviceName = "AtlasCluster";
+  const database = "intercity-web-db";
+  const db = context.services.get(serviceName).db(database);
+  
+  const companyDailyTicketSummary = db.collection('companydailyticketsummary');
+  const tickets = db.collection('tickets');
+  
+  try {
+    // date makeing start
+    const date = new Date();
+    let day = date.getDate();
+    let month = date.getMonth() + 1;
+    let year = date.getFullYear();
+    
+    if (day < 10) {
+      day = '0' + day;
+    }
+    if (month < 10) {
+      month = '0' + month;
+    }
+    
+    let formattedDate = day + '-' + month + '-' + year;
+    // end of date makeing
+    
+    // data variable initialization start
+
+    const ticket = await tickets.findOne({_id: docId});
+    
+    let isCompanySummary = await companyDailyTicketSummary.findOne({
+      operator: ticket.operator,
+      date: formattedDate
+    })
+    
+    if(!isCompanySummary){
+      const { insertedId } = await companyDailyTicketSummary.insertOne({
+        operator: ticket.operator,
+        date: formattedDate,
+        seats: 0,
+        tickets: 0,
+        seatAmount: 0,
+        good: 0,
+        goodAmount: 0,
+        extra: 0,
+        extraAmount: 0,
+        reservedTickets: 0,
+        reservedSeats: 0,
+        reservedAmount: 0,
+        //reservedTicketConfirm: 0, //apparently not possible
+        reservedSeatConfirm: 0,
+        //reservedConfirmAmount: 0, //apparently not possible
+        //reservedTicketCancel: 0, //apparently not possible
+        reservedSeatsCancel: 0,
+        reservedCancelAmount: 0,
+        vipTickets: 0,
+        vipSeats: 0,
+        cancelSeat: 0,
+        //cancelTickets: 0, //apparently not possible
+        cancelAmount:0,
+        discount: 0,
+        issuerCommission: 0
+      });
+      
+      isCompanySummary = await companyDailyTicketSummary.findOne({
+        _id:insertedId
+      })
+    }
+    
+    
+    if (changeEvent.operationType === "insert") {
+      let {
+        seats,
+        tickets, 
+        seatAmount, 
+        good, 
+        goodAmount, 
+        extra, 
+        extraAmount, 
+        reservedAmount, 
+        reservedSeats, 
+        reservedTickets,
+        vipSeats,
+        vipTickets, 
+        discount, 
+        issuerCommission
+      } = isCompanySummary;
+
+      discount += ticket.discount;
+      issuerCommission += ticket.issuerCommission;
+
+      if(ticket.ticketType === 'GOODS' ){
+        good += ticket.seatCount;
+        goodAmount += ticket.seatFare;
+      }
+      
+      if(ticket.ticketType === 'EXTRA'){
+        extra += ticket.seatCount;
+        extraAmount += ticket.seatFare;
+      }
+      
+      if(ticket.ticketType === 'SEAT' && ticket.ticketStatus === 'RESERVED'){
+        reservedAmount += ticket.paid;
+        reservedSeats += ticket.seatCount;
+        reservedTickets += 1;
+      }
+      
+      if((ticket.ticketType === 'SEAT' || ticket.ticketType === 'SEAT_GOODS') && ticket.passengerType === 'VIP'){
+        vipSeats += ticket.seatCount;
+        vipTickets += 1;
+      }
+
+      if((ticket.ticketType === 'SEAT' || ticket.ticketType === 'SEAT_GOODS') && ticket.passengerType === 'COUNTER' && ticket.ticketStatus === 'SOLD'){
+        seats += ticket.seatCount;
+        tickets += 1;
+        seatAmount += ticket.seatFare;
+      }
+
+      await companyDailyTicketSummary.updateOne({
+        operator: ticket.operator,
+        date: formattedDate
+      },
+      {
+        ...isCompanySummary,
+        seats,
+        tickets, 
+        seatAmount, 
+        good, 
+        goodAmount, 
+        extra, 
+        extraAmount, 
+        reservedAmount, 
+        reservedSeats, 
+        reservedTickets,
+        vipSeats,
+        vipTickets, 
+        discount, 
+        issuerCommission
+      }
+    )
+    }else if (changeEvent.operationType === "update" || changeEvent.operationType === "replace") {
+      let {reservedSeatsCancel, reservedCancelAmount, reservedSeatConfirm, cancelSeat, cancelAmount, seats, tickets, seatAmount } = isCompanySummary;
+
+      if(ticket.ticketStatus === 'CANCELLED' && ticket.reservedBy !== null){
+        reservedSeatsCancel+= ticket.seatCount;
+        reservedCancelAmount += ticket.refund;
+      }
+      
+      if(ticket.ticketStatus === 'CANCELLED' && ticket.reservedBy === null){
+        cancelSeat += ticket.seatCount;
+        cancelAmount += ticket.seatFare;
+      }
+
+      if(ticket.ticketStatus === 'SOLD' && ticket.reservedBy !== null){
+        reservedSeatConfirm += ticket.seatCount;
+        seats += ticket.seatCount;
+        tickets += 1;
+        seatAmount += ticket.seatFare;
+      }
+
+      await companyDailyTicketSummary.updateOne({
+        operator: ticket.operator,
+        date: formattedDate
+      }, {
+        ...isCompanySummary,
+        reservedSeatsCancel,
+        reservedCancelAmount,
+        reservedSeatConfirm,
+        cancelSeat,
+        cancelAmount,
+        seats,
+        tickets,
+        seatAmount
+      })
+    }
+
+  } catch(err) {
+    console.log("error performing mongodb write: ", err.message);
+  }
+};
+
+
